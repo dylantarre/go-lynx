@@ -22,6 +22,13 @@ func Middleware(jwtSecret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Auth middleware processing request to: %s", r.URL.Path)
 			
+			// Skip authentication for certain paths
+			if r.URL.Path == "/health" || r.URL.Path == "/random" {
+				log.Printf("Skipping authentication for public endpoint: %s", r.URL.Path)
+				next.ServeHTTP(w, r)
+				return
+			}
+			
 			// Log headers for debugging (excluding sensitive data)
 			for name, values := range r.Header {
 				if !strings.EqualFold(name, "Authorization") && !strings.EqualFold(name, "apikey") {
@@ -58,7 +65,16 @@ func Middleware(jwtSecret string) func(http.Handler) http.Handler {
 				} else if strings.Contains(err.Error(), "no valid authentication") {
 					errorMsg = "No authentication provided"
 					detailMsg = "Missing Authorization header or apikey"
+				} else if strings.Contains(err.Error(), "signature is invalid") {
+					errorMsg = "Invalid token signature"
+					detailMsg = "The token signature could not be verified with the provided secret"
+				} else if strings.Contains(err.Error(), "kid") {
+					errorMsg = "Key ID issue"
+					detailMsg = "Token contains a key identifier that couldn't be processed"
 				}
+				
+				// Log the detailed error for debugging
+				log.Printf("Returning auth error: %s - %s", errorMsg, detailMsg)
 				
 				json.NewEncoder(w).Encode(map[string]string{
 					"error": errorMsg,
