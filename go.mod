@@ -1,4 +1,4 @@
-module github.com/dylantarre/go-cassowary
+module github.com/dylantarre/go-lynx
 
 go 1.21
 

@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dylantarre/go-cassowary/internal/auth"
-	"github.com/dylantarre/go-cassowary/internal/handlers"
+	"github.com/dylantarre/go-lynx/internal/auth"
+	"github.com/dylantarre/go-lynx/internal/handlers"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"

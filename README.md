@@ -1,4 +1,4 @@
-# Go-Cassowary Music Server
+# lynx.fm Music Server
 
 A music streaming server written in Go that provides endpoints for streaming music tracks with JWT authentication via Supabase.
 
@@ -58,8 +58,8 @@ apikey: <api_key>
 To build and run the server using Docker:
 
 ```bash
-docker build -t go-cassowary .
-docker run -p 3500:3500 -e SUPABASE_JWT_SECRET=your_secret -v /path/to/music:/music go-cassowary
+docker build -t go-lynx .
+docker run -p 3500:3500 -e SUPABASE_JWT_SECRET=your_secret -v /path/to/music:/music go-lynx
 ```
 
 Or using Docker Compose:
@@ -78,4 +78,3 @@ go mod download
 
 # Run the server
 go run ./cmd/server/main.go
-```

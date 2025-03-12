@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dylantarre/go-cassowary/internal/auth"
+	"github.com/dylantarre/go-lynx/internal/auth"
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
 )

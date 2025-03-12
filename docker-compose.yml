@@ -1,11 +1,11 @@
 version: '3'
 
 services:
-  go-cassowary:
+  go-lynx:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: go-cassowary
+    container_name: go-lynx
     restart: unless-stopped
     ports:
       - "3501:3500"

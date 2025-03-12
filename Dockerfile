@@ -16,7 +16,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o /go-cassowary ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -o /go-lynx ./cmd/server
 
 # Create the final image
 FROM alpine:latest
@@ -28,7 +28,7 @@ RUN apk add --no-cache alsa-utils alsa-lib alsa-lib-dev pulseaudio
 WORKDIR /app
 
 # Copy the binary from the builder stage
-COPY --from=builder /go-cassowary /app/go-cassowary
+COPY --from=builder /go-lynx /app/go-lynx
 
 # Copy music files if they exist in the repository
 COPY ./music /music
@@ -37,4 +37,4 @@ COPY ./music /music
 EXPOSE 3500
 
 # Run the application
-CMD ["/app/go-cassowary"]
+CMD ["/app/go-lynx"]
