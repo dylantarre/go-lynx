@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 )
 
@@ -19,7 +20,10 @@ func Middleware(jwtSecret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims, err := VerifyToken(r, jwtSecret)
 			if err != nil {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				// Return a JSON error response instead of plain text
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
 				return
 			}
 

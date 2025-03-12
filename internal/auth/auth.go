@@ -42,7 +42,7 @@ func VerifyToken(r *http.Request, jwtSecret string) (*Claims, error) {
 		}, nil
 	}
 
-	return nil, errors.New("unauthorized: no valid authentication found")
+	return nil, errors.New("unauthorized: no valid authentication token found in request")
 }
 
 // decodeAndValidateToken decodes and validates a JWT token
@@ -65,7 +65,7 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 		return claims, nil
 	}
 
-	return nil, errors.New("invalid token claims")
+	return nil, errors.New("invalid token: claims validation failed")
 }
 
 // ExtractUserID extracts the user ID from claims

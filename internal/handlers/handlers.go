@@ -91,7 +91,9 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 	// Get the track ID from the URL
 	trackID := chi.URLParam(r, "id")
 	if trackID == "" {
-		http.Error(w, "Track ID is required", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Track ID is required"})
 		return
 	}
 
@@ -102,10 +104,14 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			http.Error(w, "Track not found", http.StatusNotFound)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Track not found"})
 		} else {
 			a.Logger.Errorf("Error accessing file: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Internal Server Error"})
 		}
 		return
 	}
@@ -114,7 +120,9 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		a.Logger.Errorf("Error opening file: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Internal Server Error"})
 		return
 	}
 	defer file.Close()
@@ -128,14 +136,18 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 		// Parse the range header
 		parts := strings.Split(strings.TrimPrefix(rangeHeader, "bytes="), "-")
 		if len(parts) != 2 {
-			http.Error(w, "Invalid Range header", http.StatusBadRequest)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid Range header"})
 			return
 		}
 
 		// Parse the start and end positions
 		start, err := strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
-			http.Error(w, "Invalid Range header", http.StatusBadRequest)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid Range header"})
 			return
 		}
 
@@ -145,14 +157,18 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			end, err = strconv.ParseInt(parts[1], 10, 64)
 			if err != nil {
-				http.Error(w, "Invalid Range header", http.StatusBadRequest)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid Range header"})
 				return
 			}
 		}
 
 		// Validate the range
 		if start >= fileSize || end >= fileSize || start > end {
-			http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid Range"})
 			return
 		}
 
@@ -196,7 +212,9 @@ func (a *AppState) PrefetchTracksHandler(w http.ResponseWriter, r *http.Request)
 	// Parse the request body
 	var req PrefetchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
 		return
 	}
 
@@ -227,7 +245,9 @@ func (a *AppState) UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 	// Get the claims from the context
 	claims, ok := auth.GetClaims(r.Context())
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
 		return
 	}
 
