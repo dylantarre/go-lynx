@@ -111,13 +111,13 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Get("/health", appState.HealthCheckHandler)
 		r.Get("/random", appState.RandomTrackHandler)
+		r.Get("/tracks/{id}", appState.StreamTrackHandler)
+		r.Post("/prefetch", appState.PrefetchTracksHandler)
 	})
 
 	// Protected routes (authentication required)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(supabaseJWTSecret))
-		r.Get("/tracks/{id}", appState.StreamTrackHandler)
-		r.Post("/prefetch", appState.PrefetchTracksHandler)
 		r.Get("/me", appState.UserInfoHandler)
 	})
 

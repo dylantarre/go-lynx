@@ -88,6 +88,9 @@ func (a *AppState) RandomTrackHandler(w http.ResponseWriter, r *http.Request) {
 
 // StreamTrackHandler streams a track by ID
 func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
+	// Try to authenticate but don't require it for this endpoint
+	_, _ = auth.VerifyToken(r, a.SupabaseJWTSecret)
+	
 	// Get the track ID from the URL
 	trackID := chi.URLParam(r, "id")
 	if trackID == "" {
@@ -193,6 +196,9 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 
 // PrefetchTracksHandler handles prefetch requests
 func (a *AppState) PrefetchTracksHandler(w http.ResponseWriter, r *http.Request) {
+	// Try to authenticate but don't require it for this endpoint
+	_, _ = auth.VerifyToken(r, a.SupabaseJWTSecret)
+	
 	// Parse the request body
 	var req PrefetchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
