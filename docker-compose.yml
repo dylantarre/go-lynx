@@ -1,0 +1,22 @@
+version: '3'
+
+services:
+  go-cassowary:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go-cassowary
+    restart: unless-stopped
+    ports:
+      - "3501:3500"
+    environment:
+      - MUSIC_DIR=/music
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - PORT=3500
+      - LOG_LEVEL=info
+    volumes:
+      - music-data:/music
+
+volumes:
+  music-data:
+    name: music-data
