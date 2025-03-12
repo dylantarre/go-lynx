@@ -262,69 +262,58 @@ func (a *AppState) UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DebugAuthHandler returns detailed information about the authentication token
+// DebugAuthHandler provides debugging information for authentication
 func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
-	// Get the claims from the context
+	a.Logger.Info("Received request to /debug/auth endpoint")
+	
+	// Get claims from context (already validated by middleware)
 	claims, ok := auth.GetClaims(r.Context())
 	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
+		a.Logger.Warn("No claims found in context, this should not happen with auth middleware")
+		http.Error(w, "Authentication error", http.StatusInternalServerError)
 		return
 	}
-
-	// Extract token from header for analysis
-	authHeader := r.Header.Get("Authorization")
-	tokenString := ""
-	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
-		tokenString = strings.TrimPrefix(authHeader, "Bearer ")
-	}
-
-	// Parse token without verification to extract all claims
-	var allClaims map[string]interface{}
 	
-	if tokenString != "" {
+	// Create a safe version of the JWT secret info
+	secretInfo := auth.DebugJWTSecret(a.SupabaseJWTSecret)
+	
+	// Extract token from header for additional debugging
+	authHeader := r.Header.Get("Authorization")
+	tokenDebugInfo := map[string]interface{}{
+		"present": authHeader != "" && strings.HasPrefix(authHeader, "Bearer "),
+	}
+	
+	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		
+		// Parse without validation to extract header info
 		parser := &jwt.Parser{}
-		token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
-		if err == nil && token != nil && token.Claims != nil {
-			if mapClaims, ok := token.Claims.(jwt.MapClaims); ok {
-				allClaims = mapClaims
+		token, _, err := parser.ParseUnverified(tokenString, &jwt.MapClaims{})
+		
+		if err == nil {
+			tokenDebugInfo["header"] = token.Header
+			
+			// Add expiration info if available
+			if claims.ExpiresAt != nil {
+				tokenDebugInfo["expires_at"] = claims.ExpiresAt.Time
+				tokenDebugInfo["expired"] = time.Now().After(claims.ExpiresAt.Time)
+				tokenDebugInfo["time_until_expiry"] = claims.ExpiresAt.Time.Sub(time.Now()).String()
 			}
 		}
 	}
-
-	// Determine token type
-	tokenType := "jwt"
-	if r.Header.Get("apikey") != "" {
-		tokenType = "apikey"
-	}
 	
-	// Return detailed information
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	
+	// Prepare response
 	response := map[string]interface{}{
-		"authenticated": true,
-		"user_id":       claims.Sub,
-		"email":         claims.Email,
-		"role":          claims.Role,
-		"token_type":    tokenType,
+		"auth_status": "authenticated",
+		"user_id": claims.Sub,
+		"user_email": claims.Email,
+		"user_role": claims.Role,
+		"jwt_secret_info": secretInfo,
+		"token_info": tokenDebugInfo,
+		"server_time": time.Now(),
 	}
 	
-	if allClaims != nil {
-		response["all_claims"] = allClaims
-	}
-	
-	// Add headers for debugging
-	headers := make(map[string][]string)
-	for name, values := range r.Header {
-		if !strings.EqualFold(name, "Authorization") && !strings.EqualFold(name, "apikey") {
-			headers[name] = values
-		} else {
-			headers[name] = []string{"[REDACTED]"}
-		}
-	}
-	response["headers"] = headers
-	
+	// Return JSON response
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }

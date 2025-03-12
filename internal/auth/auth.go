@@ -89,58 +89,76 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 		return nil, errors.New("token header missing algorithm")
 	}
 
-	// IMPORTANT: Supabase JWT secrets need special handling
-	// Try different formats of the secret to find the one that works
-	secretKey := []byte(jwtSecret)
-	log.Printf("Using JWT secret with length: %d", len(secretKey))
+	// Log JWT secret debug info
+	secretInfo := DebugJWTSecret(jwtSecret)
+	log.Printf("JWT Secret Info: %+v", secretInfo)
 
-	// Now parse and validate the token based on the algorithm
+	// IMPORTANT: Supabase JWT validation
+	// Supabase uses HS256 algorithm with a specific secret format
+	if alg != "HS256" {
+		log.Printf("Unexpected algorithm: %s. Supabase typically uses HS256", alg)
+		return nil, fmt.Errorf("unexpected signing method: %v", alg)
+	}
+
+	// Try multiple approaches for the secret
 	var validatedToken *jwt.Token
 	var validationErr error
+
+	// Approach 1: Use the secret as-is (most common for Supabase)
+	secretKey := []byte(jwtSecret)
+	log.Printf("Attempt 1: Using JWT secret as-is (length: %d)", len(secretKey))
 	
-	if strings.HasPrefix(alg, "HS") {
-		// HMAC-based algorithm (HS256, HS384, HS512)
-		log.Printf("Using HMAC validation with algorithm: %s", alg)
-		
-		// First try with the secret as-is
-		validatedToken, err = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			return secretKey, nil
-		})
-		
-		// If that fails, try with the secret as a base64-encoded string
-		if err != nil {
-			log.Printf("First validation attempt failed: %v. Trying alternative secret format...", err)
-			validationErr = err
+	validatedToken, err = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-	} else if strings.HasPrefix(alg, "RS") {
-		// RSA-based algorithm (RS256, RS384, RS512)
-		log.Printf("Using RSA validation with algorithm: %s", alg)
-		return nil, fmt.Errorf("RSA validation not properly implemented for this token")
+		return secretKey, nil
+	})
+	
+	if err != nil {
+		log.Printf("Attempt 1 failed: %v", err)
+		validationErr = err
+		
+		// Approach 2: Try with the secret with trailing whitespace trimmed
+		trimmedSecret := []byte(strings.TrimSpace(jwtSecret))
+		if len(trimmedSecret) != len(secretKey) {
+			log.Printf("Attempt 2: Using trimmed JWT secret (length: %d)", len(trimmedSecret))
+			
+			validatedToken, err = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return trimmedSecret, nil
+			})
+			
+			if err != nil {
+				log.Printf("Attempt 2 failed: %v", err)
+			} else {
+				log.Printf("Attempt 2 succeeded with trimmed secret!")
+			}
+		}
 	} else {
-		log.Printf("Unsupported algorithm: %s", alg)
-		return nil, fmt.Errorf("unsupported signing method: %s", alg)
+		log.Printf("Attempt 1 succeeded with original secret!")
 	}
 
-	// If validation failed, return the error
-	if validatedToken == nil && validationErr != nil {
-		log.Printf("All JWT validation attempts failed: %v", validationErr)
-		return nil, fmt.Errorf("invalid token: %w", validationErr)
-	} else if err != nil {
-		log.Printf("JWT validation error: %v", err)
-		return nil, fmt.Errorf("invalid token: %w", err)
+	// If all validation attempts failed, return the error
+	if validatedToken == nil || !validatedToken.Valid {
+		if validationErr != nil {
+			log.Printf("All JWT validation attempts failed: %v", validationErr)
+			return nil, fmt.Errorf("invalid token: %w", validationErr)
+		}
+		log.Printf("JWT validation failed: token is invalid")
+		return nil, errors.New("invalid token: validation failed")
 	}
 
-	// Check if the token is valid
-	if claims, ok := validatedToken.Claims.(*Claims); ok && validatedToken.Valid {
+	// Extract and return the claims
+	if claims, ok := validatedToken.Claims.(*Claims); ok {
 		log.Printf("JWT validation successful for user: %s", claims.Sub)
 		return claims, nil
 	}
 
-	log.Printf("JWT claims validation failed")
-	return nil, errors.New("invalid token: claims validation failed")
+	log.Printf("JWT claims extraction failed")
+	return nil, errors.New("invalid token: claims extraction failed")
 }
 
 // ExtractUserID extracts the user ID from claims
