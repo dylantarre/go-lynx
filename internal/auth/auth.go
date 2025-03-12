@@ -55,7 +55,7 @@ func VerifyToken(r *http.Request, jwtSecret string) (*Claims, error) {
 // decodeAndValidateToken decodes and validates a JWT token
 func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, error) {
 	// First, try to parse the token without validation to inspect its header
-	parser := jwt.Parser{SkipClaimsValidation: true}
+	parser := &jwt.Parser{}
 	token, _, err := parser.ParseUnverified(tokenString, &Claims{})
 	if err != nil {
 		log.Printf("Failed to parse token for inspection: %v", err)

@@ -284,7 +284,7 @@ func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
 	var allClaims map[string]interface{}
 	
 	if tokenString != "" {
-		parser := jwt.Parser{SkipClaimsValidation: true}
+		parser := &jwt.Parser{}
 		token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
 		if err == nil && token != nil && token.Claims != nil {
 			if mapClaims, ok := token.Claims.(jwt.MapClaims); ok {
@@ -293,6 +293,12 @@ func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Determine token type
+	tokenType := "jwt"
+	if r.Header.Get("apikey") != "" {
+		tokenType = "apikey"
+	}
+	
 	// Return detailed information
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -302,7 +308,7 @@ func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
 		"user_id":       claims.Sub,
 		"email":         claims.Email,
 		"role":          claims.Role,
-		"token_type":    r.Header.Get("apikey") != "" ? "apikey" : "jwt",
+		"token_type":    tokenType,
 	}
 	
 	if allClaims != nil {
