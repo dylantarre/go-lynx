@@ -1,8 +1,6 @@
 services:
   go-lynx:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     container_name: go-lynx
     restart: unless-stopped
     ports:

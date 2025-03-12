@@ -1,32 +1,29 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.21 AS builder
 
-# Install build dependencies
-RUN apk add --no-cache git gcc musl-dev
-
-WORKDIR /app
+WORKDIR /src
 
 # Copy go.mod and go.sum files
 COPY go.mod go.sum ./
 
-# Download dependencies with verbose output
-RUN go mod download -x
+# Download dependencies
+RUN go mod download
 
 # Copy the source code
 COPY . .
 
-# Build the application with proper flags and verbose output
-RUN CGO_ENABLED=0 GOOS=linux go build -v -o /go-lynx ./cmd/server
+# Build the application
+RUN go build -o /app/go-lynx ./cmd/server
 
 # Create a minimal runtime image
-FROM alpine:latest
+FROM debian:bullseye-slim
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /
 
 # Copy the binary from the builder stage
-COPY --from=builder /go-lynx /go-lynx
+COPY --from=builder /app/go-lynx /go-lynx
 
 # Create music directory
 RUN mkdir -p /music && chmod 777 /music
