@@ -119,6 +119,7 @@ func main() {
 		r.Get("/tracks/{id}", appState.StreamTrackHandler)
 		r.Post("/prefetch", appState.PrefetchTracksHandler)
 		r.Get("/me", appState.UserInfoHandler)
+		r.Get("/debug/auth", appState.DebugAuthHandler)
 	})
 
 	// Create the server

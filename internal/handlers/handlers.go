@@ -14,6 +14,7 @@ import (
 
 	"github.com/dylantarre/go-lynx/internal/auth"
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 )
 
@@ -258,5 +259,48 @@ func (a *AppState) UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 		"id":    claims.Sub,
 		"email": claims.Email,
 		"role":  claims.Role,
+	})
+}
+
+// DebugAuthHandler returns detailed information about the authentication token
+func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
+	// Get the claims from the context
+	claims, ok := auth.GetClaims(r.Context())
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
+		return
+	}
+
+	// Extract token from header for analysis
+	authHeader := r.Header.Get("Authorization")
+	tokenString := ""
+	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+		tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+	}
+
+	// Parse token without verification to extract all claims
+	token, _ := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return nil, nil // We're not verifying, just parsing
+	})
+
+	var allClaims map[string]interface{}
+	if token != nil && token.Claims != nil {
+		if mapClaims, ok := token.Claims.(jwt.MapClaims); ok {
+			allClaims = mapClaims
+		}
+	}
+
+	// Return detailed information
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"authenticated": true,
+		"user_id":       claims.Sub,
+		"email":         claims.Email,
+		"role":          claims.Role,
+		"token_type":    r.Header.Get("apikey") != "" ? "apikey" : "jwt",
+		"all_claims":    allClaims,
 	})
 }
