@@ -1,3 +1,7 @@
+// This file contains the implementation of JWT token verification and validation functions used in the application.
+// It includes the definition of the Claims structure, functions to verify tokens from HTTP requests, 
+// and helper functions for debugging and extracting user information from the claims.
+
 package auth
 
 import (
@@ -226,4 +230,74 @@ func DebugJWTSecret(jwtSecret string) map[string]interface{} {
 	}
 	
 	return info
+}
+
+// TryValidateWithMultipleSecrets attempts to validate a JWT token with multiple secret formats
+// This is useful for debugging JWT validation issues
+func TryValidateWithMultipleSecrets(tokenString string, jwtSecret string) map[string]interface{} {
+	results := make(map[string]interface{})
+	
+	// First, try to parse the token without validation to inspect its header
+	parser := &jwt.Parser{}
+	token, _, err := parser.ParseUnverified(tokenString, &Claims{})
+	if err != nil {
+		results["parse_error"] = err.Error()
+		return results
+	}
+	
+	// Log the token header
+	results["header"] = token.Header
+	
+	// Determine the signing method from the token header
+	alg, ok := token.Header["alg"].(string)
+	if !ok {
+		results["error"] = "Token header missing algorithm"
+		return results
+	}
+	
+	results["algorithm"] = alg
+	
+	// Try multiple approaches for the secret
+	attempts := []struct {
+		name   string
+		secret []byte
+	}{
+		{"original", []byte(jwtSecret)},
+		{"trimmed", []byte(strings.TrimSpace(jwtSecret))},
+		{"base64_decoded", []byte(jwtSecret)}, // Placeholder, we'll handle this specially
+	}
+	
+	// Try each secret format
+	for i, attempt := range attempts {
+		// Skip base64 decoding for now (would need to implement properly)
+		if i == 2 {
+			continue
+		}
+		
+		var validatedToken *jwt.Token
+		var validationErr error
+		
+		validatedToken, validationErr = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return attempt.secret, nil
+		})
+		
+		attemptResult := map[string]interface{}{
+			"success": validationErr == nil && validatedToken != nil && validatedToken.Valid,
+		}
+		
+		if validationErr != nil {
+			attemptResult["error"] = validationErr.Error()
+		}
+		
+		if validatedToken != nil {
+			attemptResult["valid"] = validatedToken.Valid
+		}
+		
+		results[attempt.name] = attemptResult
+	}
+	
+	return results
 }

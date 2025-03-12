@@ -49,17 +49,20 @@ func createTestMP3(t *testing.T, musicDir, filename string) string {
 
 // createTestContext creates a context with test claims
 func createTestContext() context.Context {
+	// Create a context with the claims
+	return context.WithValue(context.Background(), auth.ContextKey, createTestClaims())
+}
+
+// createTestClaims creates test claims for authentication
+func createTestClaims() *auth.Claims {
 	// Create test claims
 	role := "authenticated"
 	email := "test@example.com"
-	testClaims := &auth.Claims{
+	return &auth.Claims{
 		Sub:   "test-user-id",
 		Role:  &role,
 		Email: &email,
 	}
-	
-	// Create a context with the claims
-	return context.WithValue(context.Background(), auth.ContextKey, testClaims)
 }
 
 // TestHealthCheckHandler tests the health check endpoint
@@ -156,10 +159,11 @@ func TestStreamTrackHandler(t *testing.T) {
 	// Setup the chi router context with URL parameters
 	chiCtx := chi.NewRouteContext()
 	chiCtx.URLParams.Add("id", trackID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, chiCtx))
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, chiCtx)
 	
-	// Add authentication context
-	req = req.WithContext(createTestContext())
+	// Add authentication context to the same context
+	ctx = context.WithValue(ctx, auth.ContextKey, createTestClaims())
+	req = req.WithContext(ctx)
 	
 	// Call the handler
 	appState.StreamTrackHandler(rr, req)
@@ -167,7 +171,7 @@ func TestStreamTrackHandler(t *testing.T) {
 	// Assert
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "audio/mpeg", rr.Header().Get("Content-Type"))
-	assert.Equal(t, "16", rr.Header().Get("Content-Length")) // Length of "dummy mp3 content"
+	assert.Equal(t, "17", rr.Header().Get("Content-Length")) // Length of "dummy mp3 content"
 	assert.Equal(t, "dummy mp3 content", rr.Body.String())
 }
 
@@ -184,10 +188,11 @@ func TestStreamTrackHandler_NotFound(t *testing.T) {
 	// Setup the chi router context with URL parameters
 	chiCtx := chi.NewRouteContext()
 	chiCtx.URLParams.Add("id", "non-existent")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, chiCtx))
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, chiCtx)
 	
-	// Add authentication context
-	req = req.WithContext(createTestContext())
+	// Add authentication context to the same context
+	ctx = context.WithValue(ctx, auth.ContextKey, createTestClaims())
+	req = req.WithContext(ctx)
 	
 	// Call the handler
 	appState.StreamTrackHandler(rr, req)
