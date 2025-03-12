@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
