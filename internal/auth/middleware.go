@@ -31,6 +31,9 @@ func Middleware(jwtSecret string) func(http.Handler) http.Handler {
 				}
 			}
 			
+			// Log JWT secret length for debugging
+			log.Printf("JWT secret length in middleware: %d", len(jwtSecret))
+			
 			claims, err := VerifyToken(r, jwtSecret)
 			if err != nil {
 				log.Printf("Authentication failed: %v", err)
@@ -41,17 +44,25 @@ func Middleware(jwtSecret string) func(http.Handler) http.Handler {
 				
 				// Extract a more user-friendly error message
 				errorMsg := "Unauthorized"
+				detailMsg := "Authentication required"
+				
 				if strings.Contains(err.Error(), "signing method") {
 					errorMsg = "Invalid token signing method"
+					detailMsg = "Token algorithm mismatch"
 				} else if strings.Contains(err.Error(), "expired") {
 					errorMsg = "Token has expired"
+					detailMsg = "Please login again to get a new token"
 				} else if strings.Contains(err.Error(), "validation") {
 					errorMsg = "Token validation failed"
+					detailMsg = "Invalid token format or signature"
+				} else if strings.Contains(err.Error(), "no valid authentication") {
+					errorMsg = "No authentication provided"
+					detailMsg = "Missing Authorization header or apikey"
 				}
 				
 				json.NewEncoder(w).Encode(map[string]string{
 					"error": errorMsg,
-					"detail": "Authentication required",
+					"detail": detailMsg,
 				})
 				return
 			}
