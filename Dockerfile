@@ -1,13 +1,9 @@
 FROM golang:1.21-alpine AS builder
 
-# Install build dependencies
-RUN apk add --no-cache git
-
-# Set the working directory
 WORKDIR /app
 
 # Copy go.mod and go.sum files
-COPY go.mod go.sum* ./
+COPY go.mod go.sum ./
 
 # Download dependencies
 RUN go mod download
@@ -15,26 +11,22 @@ RUN go mod download
 # Copy the source code
 COPY . .
 
-# Build the application
+# Build the application with proper flags
 RUN CGO_ENABLED=0 GOOS=linux go build -o /go-lynx ./cmd/server
 
-# Create the final image
+# Create a minimal runtime image
 FROM alpine:latest
 
-# Install runtime dependencies for audio
-RUN apk add --no-cache alsa-utils alsa-lib alsa-lib-dev pulseaudio
-
-# Set the working directory
-WORKDIR /app
+WORKDIR /
 
 # Copy the binary from the builder stage
-COPY --from=builder /go-lynx /app/go-lynx
+COPY --from=builder /go-lynx /go-lynx
 
-# Copy music files if they exist in the repository
-COPY ./music /music
+# Create music directory
+RUN mkdir -p /music && chmod 777 /music
 
 # Expose the port
 EXPOSE 3500
 
-# Run the application
-CMD ["/app/go-lynx"]
+# Run the binary
+CMD ["/go-lynx"]

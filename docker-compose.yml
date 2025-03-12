@@ -8,12 +8,9 @@ services:
     container_name: go-lynx
     restart: unless-stopped
     ports:
-      - "3501:3500"
-    environment:
-      - MUSIC_DIR=/music
-      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
-      - PORT=3500
-      - LOG_LEVEL=info
+      - "3500:3500"
+    env_file:
+      - .env
     volumes:
       - music-data:/music
 
