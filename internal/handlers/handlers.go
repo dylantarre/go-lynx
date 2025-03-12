@@ -281,26 +281,44 @@ func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse token without verification to extract all claims
-	token, _ := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return nil, nil // We're not verifying, just parsing
-	})
-
 	var allClaims map[string]interface{}
-	if token != nil && token.Claims != nil {
-		if mapClaims, ok := token.Claims.(jwt.MapClaims); ok {
-			allClaims = mapClaims
+	
+	if tokenString != "" {
+		parser := jwt.Parser{SkipClaimsValidation: true}
+		token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
+		if err == nil && token != nil && token.Claims != nil {
+			if mapClaims, ok := token.Claims.(jwt.MapClaims); ok {
+				allClaims = mapClaims
+			}
 		}
 	}
 
 	// Return detailed information
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	
+	response := map[string]interface{}{
 		"authenticated": true,
 		"user_id":       claims.Sub,
 		"email":         claims.Email,
 		"role":          claims.Role,
 		"token_type":    r.Header.Get("apikey") != "" ? "apikey" : "jwt",
-		"all_claims":    allClaims,
-	})
+	}
+	
+	if allClaims != nil {
+		response["all_claims"] = allClaims
+	}
+	
+	// Add headers for debugging
+	headers := make(map[string][]string)
+	for name, values := range r.Header {
+		if !strings.EqualFold(name, "Authorization") && !strings.EqualFold(name, "apikey") {
+			headers[name] = values
+		} else {
+			headers[name] = []string{"[REDACTED]"}
+		}
+	}
+	response["headers"] = headers
+	
+	json.NewEncoder(w).Encode(response)
 }

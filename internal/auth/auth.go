@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -16,6 +17,8 @@ type Claims struct {
 	Sub   string  `json:"sub"`
 	Email *string `json:"email,omitempty"`
 	Role  *string `json:"role,omitempty"`
+	Aud   *string `json:"aud,omitempty"`    // Audience claim (Supabase URL)
+	Iss   *string `json:"iss,omitempty"`    // Issuer claim
 	jwt.RegisteredClaims
 }
 
@@ -51,18 +54,60 @@ func VerifyToken(r *http.Request, jwtSecret string) (*Claims, error) {
 
 // decodeAndValidateToken decodes and validates a JWT token
 func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, error) {
-	// Parse the token
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Log the token header for debugging
-		log.Printf("Token header: %v", token.Header)
-		
-		// Validate the algorithm
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			log.Printf("Unexpected signing method: %v", token.Header["alg"])
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(jwtSecret), nil
-	})
+	// First, try to parse the token without validation to inspect its header
+	parser := jwt.Parser{SkipClaimsValidation: true}
+	token, _, err := parser.ParseUnverified(tokenString, &Claims{})
+	if err != nil {
+		log.Printf("Failed to parse token for inspection: %v", err)
+		return nil, fmt.Errorf("invalid token format: %w", err)
+	}
+
+	// Log the token header for debugging
+	log.Printf("Token header: %v", token.Header)
+	
+	// Determine the signing method from the token header
+	alg, ok := token.Header["alg"].(string)
+	if !ok {
+		log.Printf("Token header missing 'alg' claim")
+		return nil, errors.New("token header missing algorithm")
+	}
+
+	// Now parse and validate the token based on the algorithm
+	var validatedToken *jwt.Token
+	
+	// Try base64 decoding the secret first (Supabase sometimes provides base64-encoded secrets)
+	decodedSecret, err := base64.StdEncoding.DecodeString(jwtSecret)
+	if err != nil {
+		log.Printf("JWT secret is not base64 encoded, using as-is")
+		decodedSecret = []byte(jwtSecret)
+	} else {
+		log.Printf("Successfully decoded base64 JWT secret, length: %d", len(decodedSecret))
+	}
+
+	if strings.HasPrefix(alg, "HS") {
+		// HMAC-based algorithm (HS256, HS384, HS512)
+		log.Printf("Using HMAC validation with algorithm: %s", alg)
+		validatedToken, err = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return decodedSecret, nil
+		})
+	} else if strings.HasPrefix(alg, "RS") {
+		// RSA-based algorithm (RS256, RS384, RS512)
+		log.Printf("Using RSA validation with algorithm: %s", alg)
+		validatedToken, err = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			// For RSA, the secret should be a public key
+			// This is a simplified approach - in production, you'd use proper key management
+			return decodedSecret, nil
+		})
+	} else {
+		log.Printf("Unsupported algorithm: %s", alg)
+		return nil, fmt.Errorf("unsupported signing method: %s", alg)
+	}
 
 	if err != nil {
 		log.Printf("JWT validation error: %v", err)
@@ -70,7 +115,7 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 	}
 
 	// Check if the token is valid
-	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+	if claims, ok := validatedToken.Claims.(*Claims); ok && validatedToken.Valid {
 		log.Printf("JWT validation successful for user: %s", claims.Sub)
 		return claims, nil
 	}
