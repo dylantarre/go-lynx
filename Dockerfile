@@ -1,3 +1,20 @@
+FROM golang:1.21-bullseye AS builder
+
+WORKDIR /app
+
+# Copy go.mod and go.sum files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy the source code
+COPY . .
+
+# Build the application for linux/amd64
+RUN GOOS=linux GOARCH=amd64 go build -o go-lynx cmd/server/main.go
+
+# Create the final image
 FROM debian:bullseye-slim
 
 # Install runtime dependencies
@@ -5,8 +22,8 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 
 WORKDIR /
 
-# Copy the pre-built binary
-COPY go-lynx /go-lynx
+# Copy the pre-built binary from the builder stage
+COPY --from=builder /app/go-lynx /go-lynx
 
 # Create music directory
 RUN mkdir -p /music && chmod 777 /music
