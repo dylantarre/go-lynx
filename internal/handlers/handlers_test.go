@@ -408,4 +408,117 @@ func TestPublicDebugHandler_WithToken(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, true, tokenInfo["present"])
 	assert.Contains(t, tokenInfo, "validation_attempts")
+}
+
+// TestDebugTokenHandler_NoToken tests the debug token endpoint without a token
+func TestDebugTokenHandler_NoToken(t *testing.T) {
+	// Setup
+	appState, tempDir := setupTestAppState(t)
+	defer os.RemoveAll(tempDir)
+
+	// Create a test request
+	req := httptest.NewRequest("GET", "/debug/token", nil)
+	rr := httptest.NewRecorder()
+
+	// Call the handler
+	appState.TokenDebugHandler(rr, req)
+
+	// Assert
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+
+	// Parse the response
+	var response map[string]interface{}
+	err := json.Unmarshal(rr.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	// Check that it reports no token
+	assert.Contains(t, response, "error")
+	assert.Equal(t, "No Bearer token provided", response["error"])
+}
+
+// TestDebugTokenHandler_WithInvalidToken tests the debug token endpoint with an invalid token
+func TestDebugTokenHandler_WithInvalidToken(t *testing.T) {
+	// Setup
+	appState, tempDir := setupTestAppState(t)
+	defer os.RemoveAll(tempDir)
+
+	// Create a test request with an invalid token
+	req := httptest.NewRequest("GET", "/debug/token", nil)
+	req.Header.Set("Authorization", "Bearer invalid.token.here")
+	rr := httptest.NewRecorder()
+
+	// Call the handler
+	appState.TokenDebugHandler(rr, req)
+
+	// Assert
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+
+	// Parse the response
+	var response map[string]interface{}
+	err := json.Unmarshal(rr.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	// Check validation info
+	assert.Contains(t, response, "validation_attempts")
+	validationAttempts := response["validation_attempts"].(map[string]interface{})
+	
+	// Check that the validation_attempts map contains the expected keys
+	// The algorithm should be in the validation_attempts map from TryValidateWithMultipleSecrets
+	assert.Contains(t, response, "algorithm")
+	
+	// Check that original and trimmed attempts are present
+	assert.Contains(t, validationAttempts, "original")
+	assert.Contains(t, validationAttempts, "trimmed")
+}
+
+// TestDebugTokenHandler_WithValidToken tests the debug token endpoint with a valid token
+func TestDebugTokenHandler_WithValidToken(t *testing.T) {
+	// Setup
+	appState, tempDir := setupTestAppState(t)
+	defer os.RemoveAll(tempDir)
+
+	// Create a valid token using the test JWT secret
+	claims := createTestClaims()
+	token, err := auth.CreateToken(claims, appState.SupabaseJWTSecret)
+	require.NoError(t, err)
+
+	// Create a test request with the valid token
+	req := httptest.NewRequest("GET", "/debug/token", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+
+	// Call the handler
+	appState.TokenDebugHandler(rr, req)
+
+	// Assert
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+
+	// Parse the response
+	var response map[string]interface{}
+	err = json.Unmarshal(rr.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	// Check validation info
+	assert.Contains(t, response, "validation_attempts")
+	validationAttempts := response["validation_attempts"].(map[string]interface{})
+	
+	// Check that original attempt is present and successful
+	assert.Contains(t, validationAttempts, "original")
+	original := validationAttempts["original"].(map[string]interface{})
+	assert.Equal(t, true, original["success"])
+	
+	// Check that the original attempt is also at the top level
+	assert.Contains(t, response, "original")
+	topLevelOriginal := response["original"].(map[string]interface{})
+	assert.Equal(t, true, topLevelOriginal["success"])
+
+	// Check token info
+	assert.Contains(t, response, "token_claims")
+	tokenClaims := response["token_claims"].(map[string]interface{})
+	assert.Equal(t, claims.Sub, tokenClaims["sub"])
+	assert.Equal(t, *claims.Role, tokenClaims["role"])
+	assert.Equal(t, *claims.Email, tokenClaims["email"])
 } 

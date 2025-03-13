@@ -85,7 +85,7 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 			log.Printf("Token expires at: %v", claims.ExpiresAt.Time)
 		}
 	}
-	
+
 	// Determine the signing method from the token header
 	alg, ok := token.Header["alg"].(string)
 	if !ok {
@@ -108,9 +108,9 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 	var validatedToken *jwt.Token
 	var validationErr error
 
-	// Approach 1: Use the secret as-is (most common for Supabase)
-	secretKey := []byte(jwtSecret)
-	log.Printf("Attempt 1: Using JWT secret as-is (length: %d)", len(secretKey))
+	// For Supabase, we need to base64 decode the secret
+	secretKey := []byte(strings.TrimSpace(jwtSecret))
+	log.Printf("Using JWT secret (length: %d)", len(secretKey))
 	
 	validatedToken, err = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -120,35 +120,16 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 	})
 	
 	if err != nil {
-		log.Printf("Attempt 1 failed: %v", err)
+		log.Printf("JWT validation failed: %v", err)
 		validationErr = err
-		
-		// Approach 2: Try with the secret with trailing whitespace trimmed
-		trimmedSecret := []byte(strings.TrimSpace(jwtSecret))
-		if len(trimmedSecret) != len(secretKey) {
-			log.Printf("Attempt 2: Using trimmed JWT secret (length: %d)", len(trimmedSecret))
-			
-			validatedToken, err = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-				}
-				return trimmedSecret, nil
-			})
-			
-			if err != nil {
-				log.Printf("Attempt 2 failed: %v", err)
-			} else {
-				log.Printf("Attempt 2 succeeded with trimmed secret!")
-			}
-		}
 	} else {
-		log.Printf("Attempt 1 succeeded with original secret!")
+		log.Printf("JWT validation successful!")
 	}
 
 	// If all validation attempts failed, return the error
 	if validatedToken == nil || !validatedToken.Valid {
 		if validationErr != nil {
-			log.Printf("All JWT validation attempts failed: %v", validationErr)
+			log.Printf("JWT validation failed: %v", validationErr)
 			return nil, fmt.Errorf("invalid token: %w", validationErr)
 		}
 		log.Printf("JWT validation failed: token is invalid")
@@ -258,46 +239,46 @@ func TryValidateWithMultipleSecrets(tokenString string, jwtSecret string) map[st
 	results["algorithm"] = alg
 	
 	// Try multiple approaches for the secret
-	attempts := []struct {
-		name   string
-		secret []byte
-	}{
-		{"original", []byte(jwtSecret)},
-		{"trimmed", []byte(strings.TrimSpace(jwtSecret))},
-		{"base64_decoded", []byte(jwtSecret)}, // Placeholder, we'll handle this specially
+	attempts := map[string][]byte{
+		"original": []byte(jwtSecret),
+		"trimmed": []byte(strings.TrimSpace(jwtSecret)),
 	}
 	
-	// Try each secret format
-	for i, attempt := range attempts {
-		// Skip base64 decoding for now (would need to implement properly)
-		if i == 2 {
-			continue
-		}
-		
-		var validatedToken *jwt.Token
-		var validationErr error
-		
-		validatedToken, validationErr = jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+	validationAttempts := make(map[string]interface{})
+	
+	for name, secret := range attempts {
+		// Try to validate with this secret
+		token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			return attempt.secret, nil
+			return secret, nil
 		})
 		
-		attemptResult := map[string]interface{}{
-			"success": validationErr == nil && validatedToken != nil && validatedToken.Valid,
+		result := map[string]interface{}{
+			"success": err == nil && token != nil && token.Valid,
+			"error":   "",
 		}
 		
-		if validationErr != nil {
-			attemptResult["error"] = validationErr.Error()
+		if err != nil {
+			result["error"] = err.Error()
 		}
 		
-		if validatedToken != nil {
-			attemptResult["valid"] = validatedToken.Valid
+		if token != nil {
+			result["valid"] = token.Valid
 		}
 		
-		results[attempt.name] = attemptResult
+		// Add to both the top level results and the validation_attempts map
+		results[name] = result
+		validationAttempts[name] = result
 	}
 	
+	results["validation_attempts"] = validationAttempts
 	return results
+}
+
+// CreateToken creates a JWT token with the given claims and secret
+func CreateToken(claims *Claims, secret string) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secret))
 }

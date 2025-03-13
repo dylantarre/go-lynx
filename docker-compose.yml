@@ -11,7 +11,10 @@ services:
       - PORT=3500
       - LOG_LEVEL=debug
     volumes:
-      - music-data:/music
+      - type: volume
+        source: music-data
+        target: /music
+    user: "1000:1000"  # Use a specific user to avoid permission issues
 
 volumes:
   music-data:

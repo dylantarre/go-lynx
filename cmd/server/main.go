@@ -51,14 +51,19 @@ func main() {
 		logger.Warn("No .env file found, using environment variables")
 	}
 
-	// Get configuration from environment variables
+	// Get music directory from environment variable or use default
 	musicDir := os.Getenv("MUSIC_DIR")
 	if musicDir == "" {
-		musicDir = "/music"
+		// Get the current working directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			logger.Fatalf("Failed to get current working directory: %v", err)
+		}
+		musicDir = filepath.Join(cwd, "music")
 		logger.Warnf("MUSIC_DIR not set, defaulting to %s", musicDir)
 	}
 
-	// Make sure the music directory exists
+	// Create music directory if it doesn't exist
 	if _, err := os.Stat(musicDir); os.IsNotExist(err) {
 		logger.Warnf("Music directory %s does not exist, creating it", musicDir)
 		if err := os.MkdirAll(musicDir, 0755); err != nil {
