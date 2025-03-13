@@ -1,15 +1,15 @@
 services:
   go-lynx:
-    build: .
+    image: dylantarre/go-lynx:v1.1.0
     container_name: go-lynx
     restart: unless-stopped
     ports:
-      - "3501:3500"
+      - "3500:3500"
     environment:
-      - MUSIC_DIR=${MUSIC_DIR}
+      - MUSIC_DIR=/music
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
-      - PORT=${PORT}
-      - LOG_LEVEL=${LOG_LEVEL}
+      - PORT=3500
+      - LOG_LEVEL=debug
     volumes:
       - music-data:/music
 
