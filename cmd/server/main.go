@@ -19,12 +19,20 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// Update this version number with each deployment
+	VERSION = "1.1.0"
+)
+
 func main() {
 	// Initialize logger
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp: true,
 	})
+
+	// Print version banner
+	logger.Infof("🎵 Starting Go-Lynx Music Server v%s 🎵", VERSION)
 
 	// Set log level based on environment variable
 	logLevel := os.Getenv("LOG_LEVEL")
