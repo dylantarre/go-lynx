@@ -389,7 +389,7 @@ func (a *AppState) PublicDebugHandler(w http.ResponseWriter, r *http.Request) {
 		"jwt_secret_info": secretInfo,
 		"token_info": tokenDebugInfo,
 		"headers": headers,
-		"server_version": "1.1.0", // Match version with main.go
+		"server_version": "1.1.1", // Match version with main.go
 	}
 	
 	// Return JSON response

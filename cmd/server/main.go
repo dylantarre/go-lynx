@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	// Update this version number with each deployment
-	VERSION = "1.1.0"
+	// VERSION is the current version of the application
+	VERSION = "1.1.1"
 )
 
 func main() {
