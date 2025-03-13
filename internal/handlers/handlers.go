@@ -317,3 +317,139 @@ func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
+
+// PublicDebugHandler provides debugging information without requiring authentication
+func (a *AppState) PublicDebugHandler(w http.ResponseWriter, r *http.Request) {
+	a.Logger.Info("Received request to /debug/public endpoint")
+	
+	// Create a safe version of the JWT secret info
+	secretInfo := auth.DebugJWTSecret(a.SupabaseJWTSecret)
+	
+	// Extract token from header for debugging
+	authHeader := r.Header.Get("Authorization")
+	tokenDebugInfo := map[string]interface{}{
+		"present": authHeader != "" && strings.HasPrefix(authHeader, "Bearer "),
+	}
+	
+	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		
+		// Try to validate the token with multiple secret formats
+		validationResults := auth.TryValidateWithMultipleSecrets(tokenString, a.SupabaseJWTSecret)
+		tokenDebugInfo["validation_attempts"] = validationResults
+		
+		// Parse without validation to extract header info
+		parser := &jwt.Parser{}
+		token, _, err := parser.ParseUnverified(tokenString, &jwt.MapClaims{})
+		
+		if err == nil {
+			tokenDebugInfo["header"] = token.Header
+			
+			// Try to extract claims for debugging
+			if claims, ok := token.Claims.(*jwt.MapClaims); ok {
+				// Only include non-sensitive claims
+				safeClaimsMap := make(map[string]interface{})
+				
+				// Extract expiration time if available
+				if exp, ok := (*claims)["exp"].(float64); ok {
+					expTime := time.Unix(int64(exp), 0)
+					tokenDebugInfo["expires_at"] = expTime
+					tokenDebugInfo["expired"] = time.Now().After(expTime)
+					tokenDebugInfo["time_until_expiry"] = expTime.Sub(time.Now()).String()
+				}
+				
+				// Include algorithm and token type
+				if alg, ok := token.Header["alg"].(string); ok {
+					safeClaimsMap["alg"] = alg
+				}
+				if typ, ok := token.Header["typ"].(string); ok {
+					safeClaimsMap["typ"] = typ
+				}
+				
+				tokenDebugInfo["safe_claims"] = safeClaimsMap
+			}
+		} else {
+			tokenDebugInfo["parse_error"] = err.Error()
+		}
+	}
+	
+	// Log all headers for debugging
+	headers := make(map[string][]string)
+	for name, values := range r.Header {
+		if !strings.EqualFold(name, "Authorization") && !strings.EqualFold(name, "apikey") {
+			headers[name] = values
+		} else {
+			headers[name] = []string{"[REDACTED]"}
+		}
+	}
+	
+	// Prepare response
+	response := map[string]interface{}{
+		"server_time": time.Now(),
+		"jwt_secret_info": secretInfo,
+		"token_info": tokenDebugInfo,
+		"headers": headers,
+		"server_version": "1.0.4", // Update version to track deployments
+	}
+	
+	// Return JSON response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// TokenDebugHandler provides detailed debugging information about token validation
+func (a *AppState) TokenDebugHandler(w http.ResponseWriter, r *http.Request) {
+	a.Logger.Info("Received request to /debug/token endpoint")
+	
+	// Extract token from header
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "No Bearer token provided",
+		})
+		return
+	}
+
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	
+	// Parse token without validation to extract header and claims
+	parser := &jwt.Parser{}
+	token, _, err := parser.ParseUnverified(tokenString, &auth.Claims{})
+	
+	debugInfo := map[string]interface{}{
+		"token_length": len(tokenString),
+		"secret_length": len(a.SupabaseJWTSecret),
+		"secret_info": auth.DebugJWTSecret(a.SupabaseJWTSecret),
+	}
+	
+	if err != nil {
+		debugInfo["parse_error"] = err.Error()
+	} else {
+		// Add token header info
+		debugInfo["token_header"] = token.Header
+		
+		// Try to extract claims
+		if claims, ok := token.Claims.(*auth.Claims); ok {
+			debugInfo["token_claims"] = map[string]interface{}{
+				"sub": claims.Sub,
+				"email": claims.Email,
+				"role": claims.Role,
+				"aud": claims.Aud,
+				"iss": claims.Iss,
+			}
+			
+			if claims.ExpiresAt != nil {
+				debugInfo["token_expires_at"] = claims.ExpiresAt.Time
+				debugInfo["token_expired"] = time.Now().After(claims.ExpiresAt.Time)
+			}
+		}
+		
+		// Try multiple validation attempts
+		debugInfo["validation_attempts"] = auth.TryValidateWithMultipleSecrets(tokenString, a.SupabaseJWTSecret)
+	}
+	
+	// Return debug info
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(debugInfo)
+}

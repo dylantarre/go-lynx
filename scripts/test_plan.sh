@@ -7,9 +7,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Configuration
-LOCAL_URL="http://localhost:8080"
+LOCAL_URL="http://localhost:3500"
 PROD_URL="https://go.lynx.fm"
-TEST_TOKEN="your_test_token_here"  # Replace with a valid test token
 
 # Helper function for testing endpoints
 test_endpoint() {
@@ -22,14 +21,16 @@ test_endpoint() {
     
     echo -e "${YELLOW}Testing $env: $name${NC}"
     
-    local headers=""
+    local curl_cmd="curl -s -w '%{http_code}' -o /tmp/response.txt"
     if [ ! -z "$auth_header" ]; then
-        headers="-H 'Authorization: Bearer $auth_header'"
+        curl_cmd="$curl_cmd -H \"Authorization: Bearer $auth_header\""
     fi
+    curl_cmd="$curl_cmd -X $method \"$url\""
     
-    local response=$(curl -s -w "\n%{http_code}" $headers -X $method $url)
-    local status=$(echo "$response" | tail -n1)
-    local body=$(echo "$response" | sed \$d)
+    echo "Running: $curl_cmd"
+    local status=$(eval $curl_cmd)
+    local body=$(cat /tmp/response.txt)
+    rm -f /tmp/response.txt
     
     if [ "$status" -eq "$expected_status" ]; then
         echo -e "${GREEN}✓ Status $status - Pass${NC}"
@@ -48,6 +49,13 @@ run_environment_tests() {
     local env=$1
     local base_url=$2
     
+    if [ -z "$TEST_TOKEN" ]; then
+        echo -e "${RED}Error: TEST_TOKEN environment variable is not set${NC}"
+        echo "Please set a valid JWT token for testing:"
+        echo "export TEST_TOKEN='your.jwt.token'"
+        exit 1
+    fi
+    
     echo -e "\n${YELLOW}Running $env Tests${NC}"
     echo "========================================="
     
@@ -60,8 +68,8 @@ run_environment_tests() {
     # Authenticated /me endpoint
     test_endpoint "$env" "Authenticated /me" "$base_url/me" "GET" 200 "$TEST_TOKEN"
     
-    # List tracks (authenticated)
-    test_endpoint "$env" "List Tracks" "$base_url/tracks" "GET" 200 "$TEST_TOKEN"
+    # Random track endpoint
+    test_endpoint "$env" "Random Track" "$base_url/random" "GET" 200
     
     # Invalid token test
     test_endpoint "$env" "Invalid Token" "$base_url/me" "GET" 401 "invalid.token.here"
@@ -74,13 +82,21 @@ echo "========================================="
 # Check if required environment variables are set
 if [ -z "$SUPABASE_JWT_SECRET" ]; then
     echo -e "${RED}Error: SUPABASE_JWT_SECRET is not set${NC}"
+    echo "Please set your Supabase JWT secret:"
+    echo "export SUPABASE_JWT_SECRET='your_secret'"
     exit 1
 fi
 
 if [ -z "$MUSIC_DIR" ]; then
     echo -e "${RED}Error: MUSIC_DIR is not set${NC}"
+    echo "Please set your music directory:"
+    echo "export MUSIC_DIR='./music'"
     exit 1
 fi
+
+# Kill any existing server on port 3500
+echo "Checking for existing server..."
+lsof -ti:3500 | xargs kill -9 2>/dev/null || true
 
 # Build the application
 echo "Building application..."
@@ -92,6 +108,9 @@ echo -e "${GREEN}Build successful${NC}"
 
 # Run local tests if specified
 if [ "$1" != "--prod-only" ]; then
+    # Set the port for the local server
+    export PORT=3500
+    
     # Start the server in background
     ./lynx &
     SERVER_PID=$!
@@ -104,7 +123,7 @@ if [ "$1" != "--prod-only" ]; then
     run_environment_tests "Local" "$LOCAL_URL"
     
     # Kill the server
-    kill $SERVER_PID
+    kill $SERVER_PID 2>/dev/null || true
 fi
 
 # Run production tests if specified

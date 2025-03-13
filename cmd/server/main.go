@@ -111,6 +111,8 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Get("/health", appState.HealthCheckHandler)
 		r.Get("/random", appState.RandomTrackHandler)
+		r.Get("/debug/public", appState.PublicDebugHandler)
+		r.Get("/debug/token", appState.TokenDebugHandler)
 	})
 
 	// Protected routes (authentication required)
