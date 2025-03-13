@@ -400,4 +400,65 @@ func TestIntegration_ExpiredJWT(t *testing.T) {
 	assert.Contains(t, response, "error")
 	assert.Contains(t, response, "detail")
 	assert.Equal(t, "Token has expired", response["error"])
+}
+
+// TestIntegration_SupabaseJWT tests authentication with a Supabase JWT token
+func TestIntegration_SupabaseJWT(t *testing.T) {
+	// Setup
+	server, tempDir := setupTestServer(t)
+	defer server.Close()
+	defer os.RemoveAll(tempDir)
+	
+	// Create a Supabase-like JWT token
+	claims := &auth.Claims{
+		Sub:   "98bb060d-ad5b-40fe-a7c8-9c8748f09805",
+		Role:  stringPtr("authenticated"),
+		Email: stringPtr("dylan@lambgoat.com"),
+		Aud:   stringPtr("authenticated"),
+		Iss:   stringPtr("https://fpuueievvvxbgbqtkjyd.supabase.co/auth/v1"),
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	}
+
+	// Create token with HS256 algorithm and kid header
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token.Header["kid"] = "KnzECV5i9h/u4BMW" // Add the Key ID as mentioned in the issue
+	token.Header["typ"] = "JWT"
+
+	// Sign the token with the test secret
+	tokenString, err := token.SignedString([]byte("test_jwt_secret"))
+	require.NoError(t, err)
+	
+	// Create a request with the JWT token
+	req, err := http.NewRequest("GET", server.URL+"/me", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	
+	// Make the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	
+	// Assert
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK status code")
+	
+	// Parse the response
+	var response map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+	
+	// Check the user info
+	assert.Equal(t, "98bb060d-ad5b-40fe-a7c8-9c8748f09805", response["id"])
+	assert.Equal(t, "dylan@lambgoat.com", response["email"])
+	assert.Equal(t, "authenticated", response["role"])
+	
+	// Log the response for debugging
+	t.Logf("Response: %+v", response)
+}
+
+// Helper function to create a string pointer
+func stringPtr(s string) *string {
+	return &s
 } 
