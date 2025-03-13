@@ -5,6 +5,7 @@
 *.so
 *.dylib
 go-cassowary
+go-lynx
 
 # Test binary, built with `go test -c`
 *.test
