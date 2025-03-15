@@ -112,9 +112,39 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	
+	// Add debug logging middleware
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			logger.WithFields(logrus.Fields{
+				"path":         r.URL.Path,
+				"raw_path":     r.URL.RawPath,
+				"request_uri":  r.RequestURI,
+				"host":         r.Host,
+				"method":       r.Method,
+				"remote_addr":  r.RemoteAddr,
+				"headers":      r.Header,
+			}).Info("Incoming request")
+			next.ServeHTTP(w, r)
+		})
+	})
+	
 	// Add path normalization middleware
-	r.Use(middleware.CleanPath)
-	r.Use(middleware.StripSlashes)
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Clean the path by removing double slashes and trailing slash
+			path := r.URL.Path
+			for len(path) > 0 && path[0] == '/' {
+				path = path[1:]
+			}
+			if path == "" {
+				path = "/"
+			} else {
+				path = "/" + path
+			}
+			r.URL.Path = path
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// Add CORS middleware with specific origin for production
 	r.Use(cors.Handler(cors.Options{
