@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 
 const (
 	// VERSION is the current version of the application
-	VERSION = "1.1.1"
+	VERSION = "1.2.0"
 )
 
 func main() {
@@ -90,10 +91,16 @@ func main() {
 		logger.Warnf("PORT not set, defaulting to %s", port)
 	}
 
+	// Get SSL configuration
+	forceHTTPS := os.Getenv("FORCE_HTTPS") == "true"
+	cloudflareEnabled := os.Getenv("CLOUDFLARE_ENABLED") == "true"
+
 	// Log important configuration
 	logger.Infof("Music directory: %s", musicDir)
 	logger.Infof("JWT secret length: %d", len(supabaseJWTSecret))
 	logger.Infof("Server port: %s", port)
+	logger.Infof("Force HTTPS: %v", forceHTTPS)
+	logger.Infof("Cloudflare enabled: %v", cloudflareEnabled)
 
 	// Create the app state
 	appState := &handlers.AppState{
@@ -156,13 +163,52 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// Add secure headers middleware
+	// Add HTTPS upgrade middleware for Cloudflare
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			// Only enforce HTTPS if configured
+			if !forceHTTPS {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check if we're behind Cloudflare
+			cfVisitor := r.Header.Get("CF-Visitor")
+			if cloudflareEnabled && cfVisitor != "" {
+				// If the request came through Cloudflare but isn't HTTPS, redirect to HTTPS
+				if !strings.Contains(cfVisitor, "https") {
+					httpsURL := "https://" + r.Host + r.RequestURI
+					http.Redirect(w, r, httpsURL, http.StatusPermanentRedirect)
+					return
+				}
+			} else if r.Header.Get("X-Forwarded-Proto") == "http" {
+				// Handle non-Cloudflare HTTPS redirect
+				httpsURL := "https://" + r.Host + r.RequestURI
+				http.Redirect(w, r, httpsURL, http.StatusPermanentRedirect)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	// Add secure headers middleware with Cloudflare support
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Set HSTS header for HTTPS
+			if forceHTTPS {
+				w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+			}
+			// Security headers
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("X-Frame-Options", "DENY")
 			w.Header().Set("X-XSS-Protection", "1; mode=block")
+			// Add Cloudflare-specific headers
+			if cloudflareEnabled {
+				w.Header().Set("Expect-CT", "max-age=86400, enforce")
+				if r.Header.Get("CF-Visitor") != "" {
+					w.Header().Set("X-Forwarded-Proto", "https")
+				}
+			}
 			next.ServeHTTP(w, r)
 		})
 	})
