@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -47,9 +46,11 @@ func main() {
 	}
 	logger.SetLevel(level)
 
-	// Load environment variables from .env file
-	if err := godotenv.Load(); err != nil {
-		logger.Warn("No .env file found, using environment variables")
+	// Load environment variables from .env file (only in development)
+	if os.Getenv("DO_APP_PLATFORM") == "" {
+		if err := godotenv.Load(); err != nil {
+			logger.Warn("No .env file found, using environment variables")
+		}
 	}
 
 	// Get music directory from environment variable or use default
@@ -85,7 +86,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "3501"
+		port = "8080" // Digital Ocean App Platform default
 		logger.Warnf("PORT not set, defaulting to %s", port)
 	}
 
@@ -149,13 +150,10 @@ func main() {
 		r.Get("/debug/auth", appState.DebugAuthHandler)
 	})
 
-	// Create the server with TLS config
+	// Create the server
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%s", port),
 		Handler: r,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
 	}
 
 	// Start the server in a goroutine

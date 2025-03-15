@@ -1,0 +1,24 @@
+name: go-lynx
+services:
+- name: go-lynx-api
+  github:
+    repo: dylantarre/go-lynx
+    branch: main
+    deploy_on_push: true
+  build_command: go build -o go-lynx cmd/server/main.go
+  run_command: ./go-lynx
+  envs:
+  - key: MUSIC_DIR
+    value: /music
+  - key: PORT
+    value: "8080"  # DO App Platform prefers port 8080
+  - key: LOG_LEVEL
+    value: info
+  - key: SUPABASE_JWT_SECRET
+    type: SECRET
+  http_port: 8080
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  routes:
+  - path: /
+    preserve_path_prefix: true 
