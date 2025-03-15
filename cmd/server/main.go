@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	// VERSION is the current version of the application
-	VERSION = "1.2.0"
+	// Update this version number with each deployment
+	VERSION = "1.1.2"  // Updated for HTTPS/Cloudflare support
 )
 
 func main() {
