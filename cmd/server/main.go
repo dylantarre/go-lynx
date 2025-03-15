@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -84,7 +85,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "3500"
+		port = "3501"
 		logger.Warnf("PORT not set, defaulting to %s", port)
 	}
 
@@ -110,15 +111,26 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 
-	// Add CORS middleware
+	// Add CORS middleware with specific origin for production
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   []string{"https://lynx.fm", "http://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "apikey"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+
+	// Add secure headers middleware
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// Public routes (no authentication required)
 	r.Group(func(r chi.Router) {
@@ -137,10 +149,13 @@ func main() {
 		r.Get("/debug/auth", appState.DebugAuthHandler)
 	})
 
-	// Create the server
+	// Create the server with TLS config
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%s", port),
 		Handler: r,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
 	}
 
 	// Start the server in a goroutine
