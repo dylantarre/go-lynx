@@ -114,9 +114,9 @@ func main() {
 
 	// Add CORS middleware with specific origin for production
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://lynx.fm", "http://localhost:3000"},
+		AllowedOrigins:   []string{"https://lynx.fm", "http://localhost:3000", "http://127.0.0.1:*", "https://lynx-app-i6oxy.ondigitalocean.app"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "apikey"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "apikey", "Origin"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
