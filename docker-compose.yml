@@ -6,7 +6,6 @@ services:
     ports:
       - "127.0.0.1:3500:3500"
     environment:
-      - MUSIC_DIR=/music
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
       - PORT=3500
       - LOG_LEVEL=debug
@@ -16,10 +15,7 @@ services:
       - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
       - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
       - R2_BUCKET=${R2_BUCKET}
-    volumes:
-      - type: volume
-        source: music-data
-        target: /music
+      - R2_REGION=${R2_REGION}
     user: "1000:1000"  # Use a specific user to avoid permission issues
 
 volumes:
