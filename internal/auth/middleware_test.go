@@ -1,3 +1,8 @@
+// This file contains tests for the JWT authentication middleware used in the application.
+// The middleware verifies JWT tokens, handles API key authentication, and skips authentication for public endpoints.
+// The tests cover various scenarios including valid and invalid JWT tokens, expired tokens, API key authentication, 
+// requests with no authentication, and requests to public endpoints.
+
 package auth
 
 import (

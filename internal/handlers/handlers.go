@@ -2,17 +2,17 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
-	"io/fs"
 	"math/rand"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dylantarre/go-lynx/internal/auth"
+	"github.com/dylantarre/go-lynx/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
@@ -20,7 +20,7 @@ import (
 
 // AppState holds the application state
 type AppState struct {
-	MusicDir          string
+	Storage           storage.Storage
 	SupabaseJWTSecret string
 	Logger            *logrus.Logger
 }
@@ -30,371 +30,170 @@ type PrefetchRequest struct {
 	TrackIDs []string `json:"track_ids"`
 }
 
-// HealthCheckHandler handles health check requests
+// HealthCheckHandler returns a 200 OK response
 func (a *AppState) HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
-// RandomTrackHandler returns a random track ID
+// RandomTrackHandler returns a random track from the music directory
 func (a *AppState) RandomTrackHandler(w http.ResponseWriter, r *http.Request) {
-	a.Logger.Info("Received request to /random endpoint")
-
-	// Try to authenticate but don't require it for this endpoint
-	_, _ = auth.VerifyToken(r, a.SupabaseJWTSecret)
-
-	// Get all MP3 files from the music directory
-	var trackIDs []string
-
-	a.Logger.Infof("Searching for MP3 files in: %s", a.MusicDir)
-
-	err := filepath.WalkDir(a.MusicDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".mp3") {
-			// Remove the .mp3 extension to get the track ID
-			trackID := strings.TrimSuffix(d.Name(), ".mp3")
-			trackIDs = append(trackIDs, trackID)
-			a.Logger.Debugf("Added track ID: %s", trackID)
-		}
-		return nil
-	})
-
+	tracks, err := a.Storage.ListTracks(r.Context())
 	if err != nil {
-		a.Logger.Errorf("Failed to read music directory: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		a.Logger.Errorf("Failed to list tracks: %v", err)
+		http.Error(w, "Failed to list tracks", http.StatusInternalServerError)
 		return
 	}
 
-	a.Logger.Infof("Found %d MP3 tracks", len(trackIDs))
-
-	if len(trackIDs) == 0 {
-		a.Logger.Error("No tracks found in music directory")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "No tracks found"})
+	if len(tracks) == 0 {
+		http.Error(w, "No tracks found", http.StatusNotFound)
 		return
 	}
 
-	// Choose a random track
+	// Get a random track
 	rand.Seed(time.Now().UnixNano())
-	trackID := trackIDs[rand.Intn(len(trackIDs))]
-	a.Logger.Infof("Selected random track: %s", trackID)
+	randomTrack := tracks[rand.Intn(len(tracks))]
 
-	// Return a JSON response with the track ID
+	// Return the track ID
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"track_id": trackID})
+	json.NewEncoder(w).Encode(map[string]string{
+		"id": randomTrack,
+	})
 }
 
-// StreamTrackHandler streams a track by ID
+// StreamTrackHandler streams a track to the client
 func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
-	// Get the track ID from the URL
 	trackID := chi.URLParam(r, "id")
 	if trackID == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Track ID is required"})
+		http.Error(w, "Track ID is required", http.StatusBadRequest)
 		return
 	}
 
-	// Construct the file path
-	filePath := filepath.Join(a.MusicDir, trackID+".mp3")
-
-	// Check if the file exists
-	fileInfo, err := os.Stat(filePath)
+	// Check if track exists
+	exists, err := a.Storage.TrackExists(r.Context(), trackID)
 	if err != nil {
-		if os.IsNotExist(err) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Track not found"})
-		} else {
-			a.Logger.Errorf("Error accessing file: %v", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Internal Server Error"})
-		}
+		a.Logger.Errorf("Failed to check if track exists: %v", err)
+		http.Error(w, "Failed to check if track exists", http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "Track not found", http.StatusNotFound)
 		return
 	}
 
-	// Open the file
-	file, err := os.Open(filePath)
-	if err != nil {
-		a.Logger.Errorf("Error opening file: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Internal Server Error"})
-		return
-	}
-	defer file.Close()
+	// Get content type based on file extension
+	contentType := getContentType(trackID)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Accept-Ranges", "bytes")
 
-	// Get the file size
-	fileSize := fileInfo.Size()
-
-	// Check if the client requested a range
+	// Handle range requests
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		// Parse the range header
-		parts := strings.Split(strings.TrimPrefix(rangeHeader, "bytes="), "-")
-		if len(parts) != 2 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid Range header"})
-			return
-		}
-
-		// Parse the start and end positions
-		start, err := strconv.ParseInt(parts[0], 10, 64)
+		start, end, err := parseRange(rangeHeader)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid Range header"})
+			http.Error(w, "Invalid range header", http.StatusBadRequest)
 			return
 		}
 
-		var end int64
-		if parts[1] == "" {
-			end = fileSize - 1
-		} else {
-			end, err = strconv.ParseInt(parts[1], 10, 64)
-			if err != nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid Range header"})
-				return
-			}
-		}
-
-		// Validate the range
-		if start >= fileSize || end >= fileSize || start > end {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid Range"})
+		reader, err := a.Storage.GetTrackRange(r.Context(), trackID, start, end)
+		if err != nil {
+			a.Logger.Errorf("Failed to get track range: %v", err)
+			http.Error(w, "Failed to get track range", http.StatusInternalServerError)
 			return
 		}
+		defer reader.Close()
 
-		// Set the content range header
-		w.Header().Set("Content-Range", "bytes "+strconv.FormatInt(start, 10)+"-"+strconv.FormatInt(end, 10)+"/"+strconv.FormatInt(fileSize, 10))
-		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
-		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", start, end))
 		w.WriteHeader(http.StatusPartialContent)
-
-		// Seek to the start position
-		_, err = file.Seek(start, io.SeekStart)
-		if err != nil {
-			a.Logger.Errorf("Error seeking file: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		// Copy the requested range to the response
-		_, err = io.CopyN(w, file, end-start+1)
-		if err != nil {
-			a.Logger.Errorf("Error copying file: %v", err)
-			return
-		}
-	} else {
-		// Stream the entire file
-		w.Header().Set("Content-Length", strconv.FormatInt(fileSize, 10))
-		w.Header().Set("Content-Type", "audio/mpeg")
-		w.WriteHeader(http.StatusOK)
-
-		// Copy the file to the response
-		_, err = io.Copy(w, file)
-		if err != nil {
-			a.Logger.Errorf("Error copying file: %v", err)
-			return
-		}
-	}
-}
-
-// PrefetchTracksHandler handles prefetch requests
-func (a *AppState) PrefetchTracksHandler(w http.ResponseWriter, r *http.Request) {
-	// Parse the request body
-	var req PrefetchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		io.Copy(w, reader)
 		return
 	}
 
-	// Check if all requested track IDs exist
-	var validTrackIDs []string
-	var invalidTrackIDs []string
+	// Stream the entire track
+	reader, err := a.Storage.GetTrack(r.Context(), trackID)
+	if err != nil {
+		a.Logger.Errorf("Failed to get track: %v", err)
+		http.Error(w, "Failed to get track", http.StatusInternalServerError)
+		return
+	}
+	defer reader.Close()
 
-	for _, trackID := range req.TrackIDs {
-		filePath := filepath.Join(a.MusicDir, trackID+".mp3")
-		if _, err := os.Stat(filePath); err == nil {
-			validTrackIDs = append(validTrackIDs, trackID)
-		} else {
-			invalidTrackIDs = append(invalidTrackIDs, trackID)
-		}
+	io.Copy(w, reader)
+}
+
+// PrefetchTracksHandler checks if tracks exist in the music directory
+func (a *AppState) PrefetchTracksHandler(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		TrackIDs []string `json:"trackIds"`
 	}
 
-	// Return a response with the valid and invalid track IDs
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	results := make(map[string]bool)
+	for _, id := range request.TrackIDs {
+		exists, err := a.Storage.TrackExists(r.Context(), id)
+		if err != nil {
+			a.Logger.Errorf("Failed to check if track exists: %v", err)
+			results[id] = false
+			continue
+		}
+		results[id] = exists
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"valid_track_ids":   validTrackIDs,
-		"invalid_track_ids": invalidTrackIDs,
-	})
+	json.NewEncoder(w).Encode(results)
 }
 
 // UserInfoHandler returns information about the authenticated user
 func (a *AppState) UserInfoHandler(w http.ResponseWriter, r *http.Request) {
-	// Get the claims from the context
-	claims, ok := auth.GetClaims(r.Context())
-	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
+	user := auth.GetUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "User not found in context", http.StatusUnauthorized)
 		return
 	}
 
-	// Return the user info
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":    claims.Sub,
-		"email": claims.Email,
-		"role":  claims.Role,
-	})
+	json.NewEncoder(w).Encode(user)
 }
 
-// DebugAuthHandler provides debugging information for authentication
+// DebugAuthHandler returns debug information for authenticated routes
 func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
-	a.Logger.Info("Received request to /debug/auth endpoint")
-	
-	// Get claims from context (already validated by middleware)
-	claims, ok := auth.GetClaims(r.Context())
-	if !ok {
-		a.Logger.Warn("No claims found in context, this should not happen with auth middleware")
-		http.Error(w, "Authentication error", http.StatusInternalServerError)
+	user := auth.GetUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "User not found in context", http.StatusUnauthorized)
 		return
 	}
-	
-	// Create a safe version of the JWT secret info
-	secretInfo := auth.DebugJWTSecret(a.SupabaseJWTSecret)
-	
-	// Extract token from header for additional debugging
-	authHeader := r.Header.Get("Authorization")
-	tokenDebugInfo := map[string]interface{}{
-		"present": authHeader != "" && strings.HasPrefix(authHeader, "Bearer "),
+
+	debug := map[string]interface{}{
+		"headers":      r.Header,
+		"method":      r.Method,
+		"path":        r.URL.Path,
+		"query":       r.URL.Query(),
+		"remote_addr": r.RemoteAddr,
+		"host":        r.Host,
+		"user":        user,
 	}
-	
-	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		
-		// Parse without validation to extract header info
-		parser := &jwt.Parser{}
-		token, _, err := parser.ParseUnverified(tokenString, &jwt.MapClaims{})
-		
-		if err == nil {
-			tokenDebugInfo["header"] = token.Header
-			
-			// Add expiration info if available
-			if claims.ExpiresAt != nil {
-				tokenDebugInfo["expires_at"] = claims.ExpiresAt.Time
-				tokenDebugInfo["expired"] = time.Now().After(claims.ExpiresAt.Time)
-				tokenDebugInfo["time_until_expiry"] = claims.ExpiresAt.Time.Sub(time.Now()).String()
-			}
-		}
-	}
-	
-	// Prepare response
-	response := map[string]interface{}{
-		"auth_status": "authenticated",
-		"user_id": claims.Sub,
-		"user_email": claims.Email,
-		"user_role": claims.Role,
-		"jwt_secret_info": secretInfo,
-		"token_info": tokenDebugInfo,
-		"server_time": time.Now(),
-	}
-	
-	// Return JSON response
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(debug)
 }
 
-// PublicDebugHandler provides debugging information without requiring authentication
+// PublicDebugHandler returns debug information for public routes
 func (a *AppState) PublicDebugHandler(w http.ResponseWriter, r *http.Request) {
-	a.Logger.Info("Received request to /debug/public endpoint")
-	
-	// Create a safe version of the JWT secret info
-	secretInfo := auth.DebugJWTSecret(a.SupabaseJWTSecret)
-	
-	// Extract token from header for debugging
-	authHeader := r.Header.Get("Authorization")
-	tokenDebugInfo := map[string]interface{}{
-		"present": authHeader != "" && strings.HasPrefix(authHeader, "Bearer "),
+	debug := map[string]interface{}{
+		"headers":      r.Header,
+		"method":      r.Method,
+		"path":        r.URL.Path,
+		"query":       r.URL.Query(),
+		"remote_addr": r.RemoteAddr,
+		"host":        r.Host,
 	}
-	
-	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		
-		// Try to validate the token with multiple secret formats
-		validationResults := auth.TryValidateWithMultipleSecrets(tokenString, a.SupabaseJWTSecret)
-		tokenDebugInfo["validation_attempts"] = validationResults
-		
-		// Parse without validation to extract header info
-		parser := &jwt.Parser{}
-		token, _, err := parser.ParseUnverified(tokenString, &jwt.MapClaims{})
-		
-		if err == nil {
-			tokenDebugInfo["header"] = token.Header
-			
-			// Try to extract claims for debugging
-			if claims, ok := token.Claims.(*jwt.MapClaims); ok {
-				// Only include non-sensitive claims
-				safeClaimsMap := make(map[string]interface{})
-				
-				// Extract expiration time if available
-				if exp, ok := (*claims)["exp"].(float64); ok {
-					expTime := time.Unix(int64(exp), 0)
-					tokenDebugInfo["expires_at"] = expTime
-					tokenDebugInfo["expired"] = time.Now().After(expTime)
-					tokenDebugInfo["time_until_expiry"] = expTime.Sub(time.Now()).String()
-				}
-				
-				// Include algorithm and token type
-				if alg, ok := token.Header["alg"].(string); ok {
-					safeClaimsMap["alg"] = alg
-				}
-				if typ, ok := token.Header["typ"].(string); ok {
-					safeClaimsMap["typ"] = typ
-				}
-				
-				tokenDebugInfo["safe_claims"] = safeClaimsMap
-			}
-		} else {
-			tokenDebugInfo["parse_error"] = err.Error()
-		}
-	}
-	
-	// Log all headers for debugging
-	headers := make(map[string][]string)
-	for name, values := range r.Header {
-		if !strings.EqualFold(name, "Authorization") && !strings.EqualFold(name, "apikey") {
-			headers[name] = values
-		} else {
-			headers[name] = []string{"[REDACTED]"}
-		}
-	}
-	
-	// Prepare response
-	response := map[string]interface{}{
-		"server_time": time.Now(),
-		"jwt_secret_info": secretInfo,
-		"token_info": tokenDebugInfo,
-		"headers": headers,
-		"server_version": "1.1.1", // Match version with main.go
-	}
-	
-	// Return JSON response
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(debug)
 }
 
 // TokenDebugHandler returns debug information about the JWT token
@@ -468,4 +267,57 @@ func (a *AppState) TokenDebugHandler(w http.ResponseWriter, r *http.Request) {
 	
 	// Return debug info
 	json.NewEncoder(w).Encode(debugInfo)
+}
+
+// Helper functions
+
+func getContentType(filename string) string {
+	ext := strings.ToLower(path.Ext(filename))
+	switch ext {
+	case ".mp3":
+		return "audio/mpeg"
+	case ".m4a":
+		return "audio/mp4"
+	case ".flac":
+		return "audio/flac"
+	case ".wav":
+		return "audio/wav"
+	case ".ogg":
+		return "audio/ogg"
+	case ".aac":
+		return "audio/aac"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func parseRange(rangeHeader string) (start int64, end int64, err error) {
+	if !strings.HasPrefix(rangeHeader, "bytes=") {
+		return 0, 0, fmt.Errorf("invalid range header format")
+	}
+
+	parts := strings.Split(strings.TrimPrefix(rangeHeader, "bytes="), "-")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid range header format")
+	}
+
+	start, err = strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid start range")
+	}
+
+	if parts[1] == "" {
+		end = -1 // No end specified
+	} else {
+		end, err = strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid end range")
+		}
+	}
+
+	if start < 0 || (end != -1 && end < start) {
+		return 0, 0, fmt.Errorf("invalid range values")
+	}
+
+	return start, end, nil
 }

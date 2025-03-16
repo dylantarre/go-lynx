@@ -5,6 +5,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -15,44 +16,150 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Claims represents the JWT claims structure for Supabase authentication
+// User represents an authenticated user
+type User struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+// Claims represents the JWT claims
 type Claims struct {
-	Sub   string  `json:"sub"`
-	Email *string `json:"email,omitempty"`
-	Role  *string `json:"role,omitempty"`
-	Aud   *string `json:"aud,omitempty"`    // Audience claim (Supabase URL)
-	Iss   *string `json:"iss,omitempty"`    // Issuer claim
 	jwt.RegisteredClaims
+	Sub   string  `json:"sub"`
+	Email *string `json:"email"`
+	Role  *string `json:"role"`
+	Aud   *string `json:"aud"`
+	Iss   *string `json:"iss"`
+}
+
+// contextKey is a custom type for context keys
+type contextKey string
+
+const (
+	// UserContextKey is the key used to store the user in the context
+	UserContextKey contextKey = "user"
+)
+
+// Middleware handles authentication using JWT tokens
+func Middleware(jwtSecret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Get token from Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				http.Error(w, "Authorization header is required", http.StatusUnauthorized)
+				return
+			}
+
+			// Check if the header starts with "Bearer "
+			if !strings.HasPrefix(authHeader, "Bearer ") {
+				http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+				return
+			}
+
+			// Extract the token
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+			// Parse and validate the token
+			token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+				// Validate the signing method
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+
+				// Return the secret key
+				return []byte(jwtSecret), nil
+			})
+
+			if err != nil {
+				http.Error(w, "Invalid token", http.StatusUnauthorized)
+				return
+			}
+
+			// Get the claims
+			claims, ok := token.Claims.(*Claims)
+			if !ok || !token.Valid {
+				http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+				return
+			}
+
+			// Create a user from the claims
+			user := &User{
+				ID:    claims.Sub,
+				Email: stringValue(claims.Email),
+				Role:  stringValue(claims.Role),
+			}
+
+			// Add the user to the context
+			ctx := context.WithValue(r.Context(), UserContextKey, user)
+
+			// Call the next handler with the updated context
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// GetUserFromContext retrieves the user from the context
+func GetUserFromContext(ctx context.Context) *User {
+	user, ok := ctx.Value(UserContextKey).(*User)
+	if !ok {
+		return nil
+	}
+	return user
 }
 
 // VerifyToken verifies a JWT token from the Authorization header
-func VerifyToken(r *http.Request, jwtSecret string) (*Claims, error) {
-	// Check for Authorization header (Bearer token)
+func VerifyToken(r *http.Request, jwtSecret string) (*Claims, bool) {
 	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		log.Printf("Attempting to validate JWT token: %s...", tokenString[:min(30, len(tokenString))])
-		log.Printf("JWT secret length: %d", len(jwtSecret))
-		return decodeAndValidateToken(tokenString, jwtSecret)
+	if authHeader == "" {
+		return nil, false
 	}
 
-	// Check for apikey header (for CLI compatibility)
-	apiKey := r.Header.Get("apikey")
-	if apiKey != "" {
-		log.Printf("Using apikey authentication")
-		// Create a simplified anonymous user for API key authentication
-		role := "anon"
-		return &Claims{
-			Sub:   "anon-user",
-			Email: nil,
-			Role:  &role,
-			RegisteredClaims: jwt.RegisteredClaims{
-				ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-			},
-		}, nil
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, false
 	}
 
-	return nil, errors.New("unauthorized: no valid authentication token found in request")
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(jwtSecret), nil
+	})
+
+	if err != nil {
+		return nil, false
+	}
+
+	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		return claims, true
+	}
+
+	return nil, false
+}
+
+// GetAnonymousClaims returns claims for an anonymous user
+func GetAnonymousClaims() *Claims {
+	email := ""
+	role := "anon"
+	return &Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "anon-user",
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		},
+		Email: &email,
+		Role:  &role,
+	}
+}
+
+// Helper function to safely get string value from pointer
+func stringValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // decodeAndValidateToken decodes and validates a JWT token
@@ -75,7 +182,7 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 	
 	if claims, ok := token.Claims.(*Claims); ok {
 		log.Printf("Token claims - Sub: %s, Email: %v, Role: %v, Aud: %v, Iss: %v", 
-			claims.Sub, 
+			claims.Subject, 
 			claims.Email, 
 			claims.Role,
 			claims.Aud,
@@ -138,7 +245,7 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 
 	// Extract and return the claims
 	if claims, ok := validatedToken.Claims.(*Claims); ok {
-		log.Printf("JWT validation successful for user: %s", claims.Sub)
+		log.Printf("JWT validation successful for user: %s", claims.Subject)
 		return claims, nil
 	}
 
@@ -148,7 +255,7 @@ func decodeAndValidateToken(tokenString string, jwtSecret string) (*Claims, erro
 
 // ExtractUserID extracts the user ID from claims
 func ExtractUserID(claims *Claims) string {
-	return claims.Sub
+	return claims.Subject
 }
 
 // Helper function for string truncation

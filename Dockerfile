@@ -1,8 +1,12 @@
-FROM golang:1.21-bullseye AS builder
+FROM golang:1.21-alpine AS builder
 
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Set working directory
 WORKDIR /app
 
-# Copy go.mod and go.sum files
+# Copy go.mod and go.sum
 COPY go.mod go.sum ./
 
 # Download dependencies
@@ -11,33 +15,23 @@ RUN go mod download
 # Copy the source code
 COPY . .
 
-# Build the application for linux/amd64
-RUN GOOS=linux GOARCH=amd64 go build -o go-lynx cmd/server/main.go
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/server
 
-# Create the final image
-FROM debian:bullseye-slim
+# Create final image
+FROM alpine:latest
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates tzdata
 
-WORKDIR /
+# Set working directory
+WORKDIR /app
 
-# Copy the pre-built binary from the builder stage
-COPY --from=builder /app/go-lynx /go-lynx
+# Copy the binary from builder
+COPY --from=builder /app/main .
 
-# Create necessary directories
-RUN mkdir -p /music && chmod 777 /music && \
-    mkdir -p /certs && chmod 700 /certs
+# Expose port
+EXPOSE 3500
 
-# Set default environment variables
-ENV MUSIC_DIR=/music \
-    PORT=3501 \
-    LOG_LEVEL=debug \
-    TLS_CERT_FILE=/certs/cert.pem \
-    TLS_KEY_FILE=/certs/key.pem
-
-# Expose the port
-EXPOSE 3501
-
-# Run the binary
-CMD ["/go-lynx"]
+# Run the application
+CMD ["./main"]

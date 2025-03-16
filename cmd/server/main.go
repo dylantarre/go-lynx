@@ -13,6 +13,7 @@ import (
 
 	"github.com/dylantarre/go-lynx/internal/auth"
 	"github.com/dylantarre/go-lynx/internal/handlers"
+	"github.com/dylantarre/go-lynx/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -80,6 +81,17 @@ func main() {
 		logger.Fatalf("Failed to get absolute path for music directory: %v", err)
 	}
 
+	// Initialize R2 storage
+	r2Storage, err := storage.NewR2Storage(
+		os.Getenv("R2_ENDPOINT"),
+		os.Getenv("R2_ACCESS_KEY_ID"),
+		os.Getenv("R2_SECRET_ACCESS_KEY"),
+		os.Getenv("R2_BUCKET"),
+	)
+	if err != nil {
+		logger.Fatalf("Failed to initialize R2 storage: %v", err)
+	}
+
 	supabaseJWTSecret := os.Getenv("SUPABASE_JWT_SECRET")
 	if supabaseJWTSecret == "" {
 		logger.Fatal("SUPABASE_JWT_SECRET must be set")
@@ -87,7 +99,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080" // Digital Ocean App Platform default
+		port = "3500"
 		logger.Warnf("PORT not set, defaulting to %s", port)
 	}
 
@@ -97,6 +109,8 @@ func main() {
 
 	// Log important configuration
 	logger.Infof("Music directory: %s", musicDir)
+	logger.Infof("R2 endpoint: %s", os.Getenv("R2_ENDPOINT"))
+	logger.Infof("R2 bucket: %s", os.Getenv("R2_BUCKET"))
 	logger.Infof("JWT secret length: %d", len(supabaseJWTSecret))
 	logger.Infof("Server port: %s", port)
 	logger.Infof("Force HTTPS: %v", forceHTTPS)
@@ -104,7 +118,7 @@ func main() {
 
 	// Create the app state
 	appState := &handlers.AppState{
-		MusicDir:          musicDir,
+		Storage:           r2Storage,
 		SupabaseJWTSecret: supabaseJWTSecret,
 		Logger:            logger,
 	}
@@ -157,9 +171,9 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},  // Allow all origins during development
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},  // Allow all headers
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "apikey"},
 		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: false,  // Must be false when AllowedOrigins is "*"
+		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 
