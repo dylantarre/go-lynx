@@ -31,3 +31,8 @@ go.work
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Local files
+server
+doppler.yaml
+scripts/
