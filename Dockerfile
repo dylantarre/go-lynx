@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 # Install build dependencies for CGO (required for SQLite)
 RUN apk add --no-cache git gcc musl-dev
