@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,22 +13,122 @@ import (
 	"time"
 
 	"github.com/dylantarre/go-lynx/internal/auth"
+	"github.com/dylantarre/go-lynx/internal/database"
 	"github.com/dylantarre/go-lynx/internal/storage"
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 )
 
 // AppState holds the application state
 type AppState struct {
-	Storage           storage.Storage
-	SupabaseJWTSecret string
-	Logger            *logrus.Logger
+	Storage   storage.Storage
+	DB        *database.DB
+	JWTSecret string
+	Logger    *logrus.Logger
 }
 
-// PrefetchRequest represents a request to prefetch tracks
-type PrefetchRequest struct {
-	TrackIDs []string `json:"track_ids"`
+// AuthRequest represents signup/login request body
+type AuthRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// AuthResponse represents signup/login response
+type AuthResponse struct {
+	Token string `json:"token"`
+	User  struct {
+		ID    int64  `json:"id"`
+		Email string `json:"email"`
+	} `json:"user"`
+}
+
+// SignupHandler handles user registration
+func (a *AppState) SignupHandler(w http.ResponseWriter, r *http.Request) {
+	var req AuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "Email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Password) < 6 {
+		http.Error(w, "Password must be at least 6 characters", http.StatusBadRequest)
+		return
+	}
+
+	user, err := a.DB.CreateUser(req.Email, req.Password)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			http.Error(w, "Email already exists", http.StatusConflict)
+			return
+		}
+		a.Logger.Errorf("Failed to create user: %v", err)
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	token, err := auth.GenerateToken(user.ID, user.Email, a.JWTSecret)
+	if err != nil {
+		a.Logger.Errorf("Failed to generate token: %v", err)
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	resp := AuthResponse{Token: token}
+	resp.User.ID = user.ID
+	resp.User.Email = user.Email
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
+}
+
+// LoginHandler handles user login
+func (a *AppState) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	var req AuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "Email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := a.DB.GetUserByEmail(req.Email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+			return
+		}
+		a.Logger.Errorf("Failed to get user: %v", err)
+		http.Error(w, "Failed to authenticate", http.StatusInternalServerError)
+		return
+	}
+
+	if !a.DB.ValidatePassword(user, req.Password) {
+		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+		return
+	}
+
+	token, err := auth.GenerateToken(user.ID, user.Email, a.JWTSecret)
+	if err != nil {
+		a.Logger.Errorf("Failed to generate token: %v", err)
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	resp := AuthResponse{Token: token}
+	resp.User.ID = user.ID
+	resp.User.Email = user.Email
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // HealthCheckHandler returns a 200 OK response
@@ -50,11 +151,9 @@ func (a *AppState) RandomTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get a random track
 	rand.Seed(time.Now().UnixNano())
 	randomTrack := tracks[rand.Intn(len(tracks))]
 
-	// Return the track ID
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"id": randomTrack,
@@ -69,7 +168,6 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if track exists
 	exists, err := a.Storage.TrackExists(r.Context(), trackID)
 	if err != nil {
 		a.Logger.Errorf("Failed to check if track exists: %v", err)
@@ -81,12 +179,10 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get content type based on file extension
 	contentType := getContentType(trackID)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	// Handle range requests
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
 		start, end, err := parseRange(rangeHeader)
@@ -109,7 +205,6 @@ func (a *AppState) StreamTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stream the entire track
 	reader, err := a.Storage.GetTrack(r.Context(), trackID)
 	if err != nil {
 		a.Logger.Errorf("Failed to get track: %v", err)
@@ -151,122 +246,12 @@ func (a *AppState) PrefetchTracksHandler(w http.ResponseWriter, r *http.Request)
 func (a *AppState) UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 	user := auth.GetUserFromContext(r.Context())
 	if user == nil {
-		http.Error(w, "User not found in context", http.StatusUnauthorized)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
-}
-
-// DebugAuthHandler returns debug information for authenticated routes
-func (a *AppState) DebugAuthHandler(w http.ResponseWriter, r *http.Request) {
-	user := auth.GetUserFromContext(r.Context())
-	if user == nil {
-		http.Error(w, "User not found in context", http.StatusUnauthorized)
-		return
-	}
-
-	debug := map[string]interface{}{
-		"headers":      r.Header,
-		"method":      r.Method,
-		"path":        r.URL.Path,
-		"query":       r.URL.Query(),
-		"remote_addr": r.RemoteAddr,
-		"host":        r.Host,
-		"user":        user,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(debug)
-}
-
-// PublicDebugHandler returns debug information for public routes
-func (a *AppState) PublicDebugHandler(w http.ResponseWriter, r *http.Request) {
-	debug := map[string]interface{}{
-		"headers":      r.Header,
-		"method":      r.Method,
-		"path":        r.URL.Path,
-		"query":       r.URL.Query(),
-		"remote_addr": r.RemoteAddr,
-		"host":        r.Host,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(debug)
-}
-
-// TokenDebugHandler returns debug information about the JWT token
-func (a *AppState) TokenDebugHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	
-	// Initialize debug info with default values
-	debugInfo := map[string]interface{}{
-		"secret_length": len(a.SupabaseJWTSecret),
-		"secret_info": auth.DebugJWTSecret(a.SupabaseJWTSecret),
-		"validation_attempts": map[string]interface{}{
-			"original": map[string]interface{}{"success": false, "error": "Invalid token format"},
-			"trimmed": map[string]interface{}{"success": false, "error": "Invalid token format"},
-		},
-		// Add default values for backward compatibility with tests
-		"algorithm": "unknown",
-		"original": map[string]interface{}{"success": false, "error": "Invalid token format"},
-		"trimmed": map[string]interface{}{"success": false, "error": "Invalid token format"},
-	}
-	
-	// Extract token from header
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		debugInfo["error"] = "No Bearer token provided"
-		json.NewEncoder(w).Encode(debugInfo)
-		return
-	}
-
-	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-	debugInfo["token_length"] = len(tokenString)
-	
-	// Parse token without validation to extract header and claims
-	parser := &jwt.Parser{}
-	token, _, err := parser.ParseUnverified(tokenString, &auth.Claims{})
-	
-	if err != nil {
-		debugInfo["parse_error"] = err.Error()
-	} else {
-		// Add token header info
-		debugInfo["token_header"] = token.Header
-		
-		// Try to extract claims
-		if claims, ok := token.Claims.(*auth.Claims); ok {
-			debugInfo["token_claims"] = map[string]interface{}{
-				"sub": claims.Sub,
-				"email": claims.Email,
-				"role": claims.Role,
-				"aud": claims.Aud,
-				"iss": claims.Iss,
-			}
-			
-			if claims.ExpiresAt != nil {
-				debugInfo["token_expires_at"] = claims.ExpiresAt.Time
-				debugInfo["token_expired"] = time.Now().After(claims.ExpiresAt.Time)
-			}
-		}
-		
-		// Try multiple validation attempts
-		validationResults := auth.TryValidateWithMultipleSecrets(tokenString, a.SupabaseJWTSecret)
-		
-		// Copy validation results to debug info
-		for k, v := range validationResults {
-			debugInfo[k] = v
-		}
-		
-		// Ensure validation_attempts is set
-		if validationAttempts, ok := validationResults["validation_attempts"]; ok {
-			debugInfo["validation_attempts"] = validationAttempts
-		}
-	}
-	
-	// Return debug info
-	json.NewEncoder(w).Encode(debugInfo)
 }
 
 // Helper functions
@@ -307,7 +292,7 @@ func parseRange(rangeHeader string) (start int64, end int64, err error) {
 	}
 
 	if parts[1] == "" {
-		end = -1 // No end specified
+		end = -1
 	} else {
 		end, err = strconv.ParseInt(parts[1], 10, 64)
 		if err != nil {

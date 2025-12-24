@@ -1,14 +1,15 @@
 services:
   go-lynx:
-    image: dylantarre/go-lynx:v1.1.2
+    image: dylantarre/go-lynx:v1.2.0
     container_name: go-lynx
     restart: unless-stopped
     ports:
       - "127.0.0.1:3500:3500"
     environment:
-      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
       - PORT=3500
       - LOG_LEVEL=debug
+      - DB_PATH=/data/lynx.db
+      - JWT_SECRET=${JWT_SECRET}
       - FORCE_HTTPS=true
       - CLOUDFLARE_ENABLED=true
       - R2_ENDPOINT=${R2_ENDPOINT}
@@ -16,8 +17,10 @@ services:
       - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
       - R2_BUCKET=${R2_BUCKET}
       - R2_REGION=${R2_REGION}
-    user: "1000:1000"  # Use a specific user to avoid permission issues
+    volumes:
+      - lynx-data:/data
+    user: "1000:1000"
 
 volumes:
-  music-data:
-    name: music-data
+  lynx-data:
+    name: lynx-data
