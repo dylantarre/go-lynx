@@ -62,6 +62,13 @@ func main() {
 	defer db.Close()
 	logger.Infof("Database initialized: %s", dbPath)
 
+	// Seed demo user
+	if err := db.SeedDemoUser(); err != nil {
+		logger.Warnf("Failed to seed demo user: %v", err)
+	} else {
+		logger.Info("Demo user ready: demo@lynx.fm")
+	}
+
 	// JWT secret for token signing
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {

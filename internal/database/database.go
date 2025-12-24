@@ -102,3 +102,15 @@ func (d *DB) ValidatePassword(user *User, password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 	return err == nil
 }
+
+// SeedDemoUser creates a demo user if it doesn't exist
+func (d *DB) SeedDemoUser() error {
+	_, err := d.GetUserByEmail("demo@lynx.fm")
+	if err == nil {
+		// Demo user already exists
+		return nil
+	}
+
+	_, err = d.CreateUser("demo@lynx.fm", "demo123")
+	return err
+}
