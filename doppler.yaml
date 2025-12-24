@@ -1,3 +1,0 @@
-setup:
-  project: go-lynx
-  config: dev  # or prod, staging, etc
