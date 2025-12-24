@@ -1,6 +1,6 @@
 services:
   go-lynx:
-    image: dylantarre/go-lynx:v1.2.0
+    build: .
     container_name: go-lynx
     restart: unless-stopped
     ports:
