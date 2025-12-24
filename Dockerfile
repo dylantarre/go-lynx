@@ -1,7 +1,7 @@
 FROM golang:1.22-alpine AS builder
 
-# Install build dependencies for CGO (required for SQLite)
-RUN apk add --no-cache git gcc musl-dev
+# Install build dependencies
+RUN apk add --no-cache git
 
 # Set working directory
 WORKDIR /app
@@ -15,8 +15,8 @@ RUN go mod download
 # Copy the source code
 COPY . .
 
-# Build the application with CGO enabled for SQLite
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o main ./cmd/server
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o main ./cmd/server
 
 # Create final image
 FROM alpine:latest
